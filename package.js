@@ -177,13 +177,6 @@ const LBUG_VERSION_TEXT = "Lbug VERSION";
     JSON.stringify(packageJson, null, 2)
   );
 
-  console.log("Removing symlink...");
-  // There is a symlink in the rust_api directory, so we need to remove it.
-  // Otherwise, the tarball will be rejected by npm.
-  await fs.unlink(
-    path.join(ARCHIVE_DIR_PATH, "lbug-source", "tools", "rust_api", "lbug-src")
-  );
-
   console.log("Creating tarball...");
   // Create the tarball
   await new Promise((resolve, reject) => {

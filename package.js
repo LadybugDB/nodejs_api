@@ -61,17 +61,14 @@ const LBUG_VERSION_TEXT = "Lbug VERSION";
 
   // git archive does not include submodule contents; copy nodejs_api into
   // the extracted source tree so install.js can find it at build time.
-  await fs.cp(
-    CURRENT_DIR,
-    path.join(CURRENT_DIR, "lbug-source", "tools", "nodejs_api"),
-    {
-      recursive: true,
-      filter: (src) => {
-        // Avoid copying the lbug-source staging directory itself (would recurse)
-        const rel = path.relative(CURRENT_DIR, src);
-        return rel !== "lbug-source" && !rel.startsWith("lbug-source" + path.sep);
-      },
-    }
+  // We must stage to a sibling temp dir first because fs.cp rejects copying a
+  // directory into a subdirectory of itself, even with a filter.
+  const NODEJS_API_STAGING = path.join(LBUG_ROOT, "nodejs_api_staging");
+  try { await fs.rm(NODEJS_API_STAGING, { recursive: true }); } catch (e) { /* ignore */ }
+  await fs.cp(CURRENT_DIR, NODEJS_API_STAGING, { recursive: true });
+  await fs.rename(
+    NODEJS_API_STAGING,
+    path.join(CURRENT_DIR, "lbug-source", "tools", "nodejs_api")
   );
 
   // Remove the archive directory

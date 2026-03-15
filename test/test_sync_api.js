@@ -27,6 +27,21 @@ describe("Query execution", function () {
     }
   });
 
+  it("should keep child query results usable after closing the parent result", function () {
+    const queryResults = conn.querySync("RETURN 1 AS first; RETURN 2 AS second;");
+    const parentResult = queryResults[0];
+    const childResult = queryResults[1];
+
+    const firstChildTuple = childResult.getNextSync();
+    assert.equal(firstChildTuple["second"], 2);
+    parentResult.close();
+
+    childResult.resetIterator();
+    const secondChildTuple = childResult.getNextSync();
+    assert.equal(secondChildTuple["second"], 2);
+    childResult.close();
+  });
+
   it("should execute a prepared statement synchronously", function () {
     const preparedStatement = conn.prepareSync(
       "RETURN $a as id"

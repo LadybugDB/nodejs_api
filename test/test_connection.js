@@ -168,6 +168,42 @@ describe("Query", function () {
     assert.deepEqual(results, [[{ 1: 1 }], [{ 2: 2 }], [{ 3: 3 }]]);
   });
 
+  it("should keep child query results usable after closing the parent result", async function () {
+    const queryResults = await conn.query("RETURN 1 AS first; RETURN 2 AS second;");
+    const parentResult = queryResults[0];
+    const childResult = queryResults[1];
+
+    const firstChildTuple = await childResult.getNext();
+    assert.equal(firstChildTuple["second"], 2);
+    parentResult.close();
+
+    childResult.resetIterator();
+    const secondChildTuple = await childResult.getNext();
+    assert.equal(secondChildTuple["second"], 2);
+    childResult.close();
+  });
+
+  it("should keep deeper child query results usable after closing earlier results", async function () {
+    const queryResults = await conn.query(`
+      RETURN 1 AS first;
+      RETURN 2 AS second;
+      RETURN 3 AS third;
+    `);
+    const firstResult = queryResults[0];
+    const secondResult = queryResults[1];
+    const thirdResult = queryResults[2];
+
+    const firstThirdTuple = await thirdResult.getNext();
+    assert.equal(firstThirdTuple["third"], 3);
+    firstResult.close();
+    secondResult.close();
+
+    thirdResult.resetIterator();
+    const secondThirdTuple = await thirdResult.getNext();
+    assert.equal(secondThirdTuple["third"], 3);
+    thirdResult.close();
+  });
+
   it("should throw error if one of the multiple queries is invalid", async function () {
     try {
       await conn.query(`

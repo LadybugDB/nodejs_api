@@ -39,6 +39,9 @@ describe("Query execution", function () {
     childResult.resetIterator();
     const secondChildTuple = childResult.getNextSync();
     assert.equal(secondChildTuple["second"], 2);
+    childResult.resetIterator();
+    const thirdChildTuple = childResult.getNextSync();
+    assert.equal(thirdChildTuple["second"], 2);
     childResult.close();
   });
 
@@ -59,6 +62,17 @@ describe("Query execution", function () {
     const secondThirdTuple = thirdResult.getNextSync();
     assert.equal(secondThirdTuple["third"], 3);
     thirdResult.close();
+  });
+
+  it("should allow repeated close on detached query results", function () {
+    const queryResults = conn.querySync("RETURN 1 AS first; RETURN 2 AS second;");
+    const parentResult = queryResults[0];
+    const childResult = queryResults[1];
+
+    parentResult.close();
+    parentResult.close();
+    childResult.close();
+    childResult.close();
   });
 
   it("should execute a prepared statement synchronously", function () {

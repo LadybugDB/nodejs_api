@@ -327,10 +327,12 @@ class Connection {
    */
   _getNextQueryResult(nodeQueryResult) {
     return new Promise((resolve, reject) => {
-      const nextNodeQueryResult = new LbugNative.NodeQueryResult();
-      nodeQueryResult.getNextQueryResultAsync(nextNodeQueryResult, (err) => {
+      nodeQueryResult.getNextQueryResultAsync((err, nextNodeQueryResult) => {
         if (err) {
           return reject(err);
+        }
+        if (!nextNodeQueryResult) {
+          return resolve(undefined);
         }
         return resolve(new QueryResult(this, nextNodeQueryResult));
       });
@@ -370,8 +372,7 @@ class Connection {
     const queryResults = [wrappedQueryResult];
     let currentQueryResult = nodeQueryResult;
     while (currentQueryResult.hasNextQueryResult()) {
-      const nextNodeQueryResult = new LbugNative.NodeQueryResult();
-      currentQueryResult.getNextQueryResultSync(nextNodeQueryResult);
+      const nextNodeQueryResult = currentQueryResult.getNextQueryResultSync();
       const nextQueryResult = new QueryResult(this, nextNodeQueryResult);
       queryResults.push(nextQueryResult);
       currentQueryResult = nextNodeQueryResult;

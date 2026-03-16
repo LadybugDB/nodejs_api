@@ -180,6 +180,9 @@ describe("Query", function () {
     childResult.resetIterator();
     const secondChildTuple = await childResult.getNext();
     assert.equal(secondChildTuple["second"], 2);
+    childResult.resetIterator();
+    const thirdChildTuple = await childResult.getNext();
+    assert.equal(thirdChildTuple["second"], 2);
     childResult.close();
   });
 
@@ -202,6 +205,17 @@ describe("Query", function () {
     const secondThirdTuple = await thirdResult.getNext();
     assert.equal(secondThirdTuple["third"], 3);
     thirdResult.close();
+  });
+
+  it("should allow repeated close on detached query results", async function () {
+    const queryResults = await conn.query("RETURN 1 AS first; RETURN 2 AS second;");
+    const parentResult = queryResults[0];
+    const childResult = queryResults[1];
+
+    parentResult.close();
+    parentResult.close();
+    childResult.close();
+    childResult.close();
   });
 
   it("should throw error if one of the multiple queries is invalid", async function () {

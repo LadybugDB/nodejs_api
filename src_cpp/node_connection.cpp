@@ -113,10 +113,11 @@ Napi::Value NodeConnection::QuerySync(const Napi::CallbackInfo& info) {
     auto statement = info[0].As<Napi::String>().Utf8Value();
     auto nodeQueryResult = Napi::ObjectWrap<NodeQueryResult>::Unwrap(info[1].As<Napi::Object>());
     try {
-        auto result = connection->query(statement).release();
-        nodeQueryResult->SetQueryResult(result, true);
-        if (!result->isSuccess()) {
-            Napi::Error::New(env, result->getErrorMessage()).ThrowAsJavaScriptException();
+        auto result = connection->query(statement);
+        auto* resultRaw = result.get();
+        nodeQueryResult->AdoptQueryResult(std::move(result));
+        if (!resultRaw->isSuccess()) {
+            Napi::Error::New(env, resultRaw->getErrorMessage()).ThrowAsJavaScriptException();
         }
     } catch (const std::exception& exc) {
         Napi::Error::New(env, std::string(exc.what())).ThrowAsJavaScriptException();
@@ -132,13 +133,12 @@ Napi::Value NodeConnection::ExecuteSync(const Napi::CallbackInfo& info) {
     auto nodeQueryResult = Napi::ObjectWrap<NodeQueryResult>::Unwrap(info[1].As<Napi::Object>());
     try {
         auto params = Util::TransformParametersForExec(info[2].As<Napi::Array>());
-        auto result = connection
-                          ->executeWithParams(nodePreparedStatement->preparedStatement.get(),
-                              std::move(params))
-                          .release();
-        nodeQueryResult->SetQueryResult(result, true);
-        if (!result->isSuccess()) {
-            Napi::Error::New(env, result->getErrorMessage()).ThrowAsJavaScriptException();
+        auto result = connection->executeWithParams(nodePreparedStatement->preparedStatement.get(),
+            std::move(params));
+        auto* resultRaw = result.get();
+        nodeQueryResult->AdoptQueryResult(std::move(result));
+        if (!resultRaw->isSuccess()) {
+            Napi::Error::New(env, resultRaw->getErrorMessage()).ThrowAsJavaScriptException();
         }
     } catch (const std::exception& exc) {
         Napi::Error::New(env, std::string(exc.what())).ThrowAsJavaScriptException();

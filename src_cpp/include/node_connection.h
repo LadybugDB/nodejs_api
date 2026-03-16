@@ -99,11 +99,11 @@ public:
         try {
             auto result =
                 connection
-                    ->executeWithParamsWithID(preparedStatement.get(), std::move(params), queryID)
-                    .release();
-            nodeQueryResult->SetQueryResult(result, true);
-            if (!result->isSuccess()) {
-                SetError(result->getErrorMessage());
+                    ->executeWithParamsWithID(preparedStatement.get(), std::move(params), queryID);
+            auto* resultRaw = result.get();
+            nodeQueryResult->AdoptQueryResult(std::move(result));
+            if (!resultRaw->isSuccess()) {
+                SetError(resultRaw->getErrorMessage());
                 return;
             }
         } catch (const std::exception& exc) {
@@ -155,10 +155,11 @@ public:
             progressBar->toggleProgressBarPrinting(true);
         }
         try {
-            auto result = connection->queryWithID(statement, queryID).release();
-            nodeQueryResult->SetQueryResult(result, true);
-            if (!result->isSuccess()) {
-                SetError(result->getErrorMessage());
+            auto result = connection->queryWithID(statement, queryID);
+            auto* resultRaw = result.get();
+            nodeQueryResult->AdoptQueryResult(std::move(result));
+            if (!resultRaw->isSuccess()) {
+                SetError(resultRaw->getErrorMessage());
             }
         } catch (const std::exception& exc) {
             SetError(std::string(exc.what()));

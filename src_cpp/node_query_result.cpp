@@ -1,11 +1,14 @@
 #include "include/node_query_result.h"
 
+#include <stdexcept>
 #include <thread>
 
 #include "include/node_util.h"
 #include "main/lbug.h"
 
 using namespace lbug::main;
+
+Napi::FunctionReference NodeQueryResult::constructor;
 
 Napi::Object NodeQueryResult::Init(Napi::Env env, Napi::Object exports) {
     Napi::HandleScope scope(env);
@@ -27,8 +30,18 @@ Napi::Object NodeQueryResult::Init(Napi::Env env, Napi::Object exports) {
             InstanceMethod("getQuerySummarySync", &NodeQueryResult::GetQuerySummarySync),
             InstanceMethod("close", &NodeQueryResult::Close)});
 
+    constructor = Napi::Persistent(t);
+    constructor.SuppressDestruct();
     exports.Set("NodeQueryResult", t);
     return exports;
+}
+
+Napi::Object NodeQueryResult::NewInstance(
+    Napi::Env /*env*/, std::unique_ptr<QueryResult> queryResult) {
+    auto obj = constructor.New({});
+    auto* nodeQueryResult = Napi::ObjectWrap<NodeQueryResult>::Unwrap(obj);
+    nodeQueryResult->AdoptQueryResult(std::move(queryResult));
+    return obj;
 }
 
 NodeQueryResult::NodeQueryResult(const Napi::CallbackInfo& info)
@@ -38,20 +51,10 @@ NodeQueryResult::~NodeQueryResult() {
     this->Close();
 }
 
-void NodeQueryResult::SetOwnedQueryResult(std::unique_ptr<QueryResult> queryResult) {
-    Close();
+void NodeQueryResult::AdoptQueryResult(std::unique_ptr<QueryResult> queryResult) {
+    ThrowIfAsyncOperationInFlight("replace");
+    columnNames.reset();
     ownedQueryResult = std::move(queryResult);
-    this->queryResult = ownedQueryResult.get();
-}
-
-void NodeQueryResult::SetQueryResult(QueryResult* queryResult, bool isOwned) {
-    Close();
-    if (isOwned) {
-        ownedQueryResult.reset(queryResult);
-        this->queryResult = ownedQueryResult.get();
-        return;
-    }
-    this->queryResult = queryResult;
 }
 
 std::unique_ptr<QueryResult> NodeQueryResult::DetachNextQueryResult() {
@@ -61,11 +64,33 @@ std::unique_ptr<QueryResult> NodeQueryResult::DetachNextQueryResult() {
     return ownedQueryResult->moveNextResult();
 }
 
+QueryResult& NodeQueryResult::GetQueryResult() const {
+    if (ownedQueryResult == nullptr) {
+        throw std::runtime_error("Query result is closed.");
+    }
+    return *ownedQueryResult;
+}
+
+void NodeQueryResult::AcquireAsyncUse() {
+    activeAsyncUses.fetch_add(1, std::memory_order_relaxed);
+}
+
+void NodeQueryResult::ReleaseAsyncUse() {
+    activeAsyncUses.fetch_sub(1, std::memory_order_relaxed);
+}
+
+void NodeQueryResult::ThrowIfAsyncOperationInFlight(const char* operation) const {
+    if (activeAsyncUses.load(std::memory_order_acquire) != 0) {
+        throw std::runtime_error(std::string("Cannot ") + operation +
+                                 " QueryResult while an async operation is in flight.");
+    }
+}
+
 void NodeQueryResult::ResetIterator(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     Napi::HandleScope scope(env);
     try {
-        this->queryResult->resetIterator();
+        GetQueryResult().resetIterator();
     } catch (const std::exception& exc) {
         Napi::Error::New(env, std::string(exc.what())).ThrowAsJavaScriptException();
     }
@@ -75,7 +100,7 @@ Napi::Value NodeQueryResult::HasNext(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     Napi::HandleScope scope(env);
     try {
-        return Napi::Boolean::New(env, this->queryResult->hasNext());
+        return Napi::Boolean::New(env, GetQueryResult().hasNext());
     } catch (const std::exception& exc) {
         Napi::Error::New(env, std::string(exc.what())).ThrowAsJavaScriptException();
     }
@@ -86,7 +111,7 @@ Napi::Value NodeQueryResult::HasNextQueryResult(const Napi::CallbackInfo& info) 
     Napi::Env env = info.Env();
     Napi::HandleScope scope(env);
     try {
-        return Napi::Boolean::New(env, this->queryResult->hasNextQueryResult());
+        return Napi::Boolean::New(env, GetQueryResult().hasNextQueryResult());
     } catch (const std::exception& exc) {
         Napi::Error::New(env, std::string(exc.what())).ThrowAsJavaScriptException();
     }
@@ -96,10 +121,8 @@ Napi::Value NodeQueryResult::HasNextQueryResult(const Napi::CallbackInfo& info) 
 Napi::Value NodeQueryResult::GetNextQueryResultAsync(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     Napi::HandleScope scope(env);
-    auto newQueryResult = Napi::ObjectWrap<NodeQueryResult>::Unwrap(info[0].As<Napi::Object>());
-    auto callback = info[1].As<Napi::Function>();
-    auto* asyncWorker =
-        new NodeQueryResultGetNextQueryResultAsyncWorker(callback, this, newQueryResult);
+    auto callback = info[0].As<Napi::Function>();
+    auto* asyncWorker = new NodeQueryResultGetNextQueryResultAsyncWorker(callback, this);
     asyncWorker->Queue();
     return info.Env().Undefined();
 }
@@ -109,21 +132,15 @@ Napi::Value NodeQueryResult::GetNextQueryResultSync(const Napi::CallbackInfo& in
     Napi::HandleScope scope(env);
     try {
         auto nextOwnedResult = DetachNextQueryResult();
-        auto nextResult =
-            nextOwnedResult ? nextOwnedResult.get() : this->queryResult->getNextQueryResult();
-        if (nextResult == nullptr) {
+        if (nextOwnedResult == nullptr) {
             return env.Undefined();
         }
-        if (!nextResult->isSuccess()) {
-            Napi::Error::New(env, nextResult->getErrorMessage()).ThrowAsJavaScriptException();
+        if (!nextOwnedResult->isSuccess()) {
+            Napi::Error::New(env, nextOwnedResult->getErrorMessage())
+                .ThrowAsJavaScriptException();
+            return env.Undefined();
         }
-        auto nodeQueryResult =
-            Napi::ObjectWrap<NodeQueryResult>::Unwrap(info[0].As<Napi::Object>());
-        if (nextOwnedResult) {
-            nodeQueryResult->SetOwnedQueryResult(std::move(nextOwnedResult));
-        } else {
-            nodeQueryResult->SetQueryResult(nextResult, false);
-        }
+        return NewInstance(env, std::move(nextOwnedResult));
     } catch (const std::exception& exc) {
         Napi::Error::New(env, std::string(exc.what())).ThrowAsJavaScriptException();
     }
@@ -134,7 +151,7 @@ Napi::Value NodeQueryResult::GetNumTuples(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     Napi::HandleScope scope(env);
     try {
-        return Napi::Number::New(env, this->queryResult->getNumTuples());
+        return Napi::Number::New(env, GetQueryResult().getNumTuples());
     } catch (const std::exception& exc) {
         Napi::Error::New(env, std::string(exc.what())).ThrowAsJavaScriptException();
     }
@@ -154,10 +171,11 @@ Napi::Value NodeQueryResult::GetNextSync(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     Napi::HandleScope scope(env);
     try {
-        if (!this->queryResult->hasNext()) {
+        auto& queryResult = GetQueryResult();
+        if (!queryResult.hasNext()) {
             return env.Null();
         }
-        auto cppTuple = this->queryResult->getNext();
+        auto cppTuple = queryResult.getNext();
         Napi::Object nodeTuple = Napi::Object::New(env);
         PopulateColumnNames();
         for (auto i = 0u; i < cppTuple->len(); ++i) {
@@ -185,7 +203,7 @@ Napi::Value NodeQueryResult::GetColumnDataTypesSync(const Napi::CallbackInfo& in
     Napi::Env env = info.Env();
     Napi::HandleScope scope(env);
     try {
-        auto columnDataTypes = this->queryResult->getColumnDataTypes();
+        auto columnDataTypes = GetQueryResult().getColumnDataTypes();
         Napi::Array nodeColumnDataTypes = Napi::Array::New(env, columnDataTypes.size());
         for (auto i = 0u; i < columnDataTypes.size(); ++i) {
             nodeColumnDataTypes.Set(i, Napi::String::New(env, columnDataTypes[i].toString()));
@@ -227,8 +245,7 @@ void NodeQueryResult::PopulateColumnNames() {
     if (this->columnNames != nullptr) {
         return;
     }
-    this->columnNames =
-        std::make_unique<std::vector<std::string>>(this->queryResult->getColumnNames());
+    this->columnNames = std::make_unique<std::vector<std::string>>(GetQueryResult().getColumnNames());
 }
 
 Napi::Value NodeQueryResult::GetQuerySummaryAsync(const Napi::CallbackInfo& info) {
@@ -245,7 +262,7 @@ Napi::Value NodeQueryResult::GetQuerySummarySync(const Napi::CallbackInfo& info)
     Napi::HandleScope scope(env);
     try {
         Napi::Object summary = Napi::Object::New(env);
-        auto cppSummary = this->queryResult->getQuerySummary();
+        auto cppSummary = GetQueryResult().getQuerySummary();
         summary.Set("compilingTime", Napi::Number::New(env, cppSummary->getCompilingTime()));
         summary.Set("executionTime", Napi::Number::New(env, cppSummary->getExecutionTime()));
         return summary;
@@ -258,11 +275,15 @@ Napi::Value NodeQueryResult::GetQuerySummarySync(const Napi::CallbackInfo& info)
 void NodeQueryResult::Close(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     Napi::HandleScope scope(env);
-    this->Close();
+    try {
+        ThrowIfAsyncOperationInFlight("close");
+        this->Close();
+    } catch (const std::exception& exc) {
+        Napi::Error::New(env, std::string(exc.what())).ThrowAsJavaScriptException();
+    }
 }
 
 void NodeQueryResult::Close() {
     columnNames.reset();
     ownedQueryResult.reset();
-    queryResult = nullptr;
 }

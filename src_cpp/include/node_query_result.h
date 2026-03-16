@@ -5,6 +5,8 @@
 #include "node_util.h"
 #include "planner/operator/logical_plan.h"
 #include "processor/result/factorized_table.h"
+#include <atomic>
+#include <memory>
 #include <napi.h>
 
 using namespace lbug::processor;
@@ -18,9 +20,9 @@ class NodeQueryResult : public Napi::ObjectWrap<NodeQueryResult> {
 
 public:
     static Napi::Object Init(Napi::Env env, Napi::Object exports);
+    static Napi::Object NewInstance(Napi::Env env, std::unique_ptr<QueryResult> queryResult);
     explicit NodeQueryResult(const Napi::CallbackInfo& info);
-    void SetQueryResult(QueryResult* queryResult, bool isOwned);
-    void SetOwnedQueryResult(std::unique_ptr<QueryResult> queryResult);
+    void AdoptQueryResult(std::unique_ptr<QueryResult> queryResult);
     std::unique_ptr<QueryResult> DetachNextQueryResult();
     ~NodeQueryResult() override;
 
@@ -42,11 +44,16 @@ private:
     void PopulateColumnNames();
     void Close(const Napi::CallbackInfo& info);
     void Close();
+    QueryResult& GetQueryResult() const;
+    void AcquireAsyncUse();
+    void ReleaseAsyncUse();
+    void ThrowIfAsyncOperationInFlight(const char* operation) const;
 
 private:
-    QueryResult* queryResult = nullptr;
+    static Napi::FunctionReference constructor;
     std::unique_ptr<QueryResult> ownedQueryResult = nullptr;
     std::unique_ptr<std::vector<std::string>> columnNames = nullptr;
+    std::atomic<uint32_t> activeAsyncUses = 0;
 };
 
 enum GetColumnMetadataType { DATA_TYPE, NAME };
@@ -55,14 +62,17 @@ class NodeQueryResultGetColumnMetadataAsyncWorker : public Napi::AsyncWorker {
 public:
     NodeQueryResultGetColumnMetadataAsyncWorker(Napi::Function& callback,
         NodeQueryResult* nodeQueryResult, GetColumnMetadataType type)
-        : AsyncWorker(callback), nodeQueryResult(nodeQueryResult), type(type) {}
+        : AsyncWorker(callback), nodeQueryResult(nodeQueryResult), type(type) {
+        nodeQueryResult->AcquireAsyncUse();
+        nodeQueryResult->Ref();
+    }
 
     ~NodeQueryResultGetColumnMetadataAsyncWorker() override = default;
 
     inline void Execute() override {
         try {
             if (type == GetColumnMetadataType::DATA_TYPE) {
-                auto columnDataTypes = nodeQueryResult->queryResult->getColumnDataTypes();
+                auto columnDataTypes = nodeQueryResult->GetQueryResult().getColumnDataTypes();
                 result = std::vector<std::string>(columnDataTypes.size());
                 for (auto i = 0u; i < columnDataTypes.size(); ++i) {
                     result[i] = columnDataTypes[i].toString();
@@ -82,10 +92,16 @@ public:
         for (auto i = 0u; i < result.size(); ++i) {
             nodeResult.Set(i, result[i]);
         }
+        nodeQueryResult->ReleaseAsyncUse();
+        nodeQueryResult->Unref();
         Callback().Call({env.Null(), nodeResult});
     }
 
-    inline void OnError(Napi::Error const& error) override { Callback().Call({error.Value()}); }
+    inline void OnError(Napi::Error const& error) override {
+        nodeQueryResult->ReleaseAsyncUse();
+        nodeQueryResult->Unref();
+        Callback().Call({error.Value()});
+    }
 
 private:
     NodeQueryResult* nodeQueryResult;
@@ -96,16 +112,20 @@ private:
 class NodeQueryResultGetNextAsyncWorker : public Napi::AsyncWorker {
 public:
     NodeQueryResultGetNextAsyncWorker(Napi::Function& callback, NodeQueryResult* nodeQueryResult)
-        : AsyncWorker(callback), nodeQueryResult(nodeQueryResult) {}
+        : AsyncWorker(callback), nodeQueryResult(nodeQueryResult) {
+        nodeQueryResult->AcquireAsyncUse();
+        nodeQueryResult->Ref();
+    }
 
     ~NodeQueryResultGetNextAsyncWorker() override = default;
 
     inline void Execute() override {
         try {
-            if (!nodeQueryResult->queryResult->hasNext()) {
+            auto& queryResult = nodeQueryResult->GetQueryResult();
+            if (!queryResult.hasNext()) {
                 cppTuple.reset();
             }
-            cppTuple = nodeQueryResult->queryResult->getNext();
+            cppTuple = queryResult.getNext();
         } catch (const std::exception& exc) {
             SetError(std::string(exc.what()));
         }
@@ -114,24 +134,35 @@ public:
     inline void OnOK() override {
         auto env = Env();
         if (cppTuple == nullptr) {
+            nodeQueryResult->ReleaseAsyncUse();
+            nodeQueryResult->Unref();
             Callback().Call({env.Null(), env.Undefined()});
             return;
         }
         Napi::Object nodeTuple = Napi::Object::New(env);
         try {
-            auto columnNames = nodeQueryResult->queryResult->getColumnNames();
+            auto columnNames = nodeQueryResult->GetQueryResult().getColumnNames();
             for (auto i = 0u; i < cppTuple->len(); ++i) {
                 Napi::Value value = Util::ConvertToNapiObject(*cppTuple->getValue(i), env);
                 nodeTuple.Set(columnNames[i], value);
             }
         } catch (const std::exception& exc) {
             auto napiError = Napi::Error::New(env, exc.what());
+            nodeQueryResult->ReleaseAsyncUse();
+            nodeQueryResult->Unref();
             Callback().Call({napiError.Value(), env.Undefined()});
+            return;
         }
+        nodeQueryResult->ReleaseAsyncUse();
+        nodeQueryResult->Unref();
         Callback().Call({env.Null(), nodeTuple});
     }
 
-    inline void OnError(Napi::Error const& error) override { Callback().Call({error.Value()}); }
+    inline void OnError(Napi::Error const& error) override {
+        nodeQueryResult->ReleaseAsyncUse();
+        nodeQueryResult->Unref();
+        Callback().Call({error.Value()});
+    }
 
 private:
     NodeQueryResult* nodeQueryResult;
@@ -140,42 +171,48 @@ private:
 
 class NodeQueryResultGetNextQueryResultAsyncWorker : public Napi::AsyncWorker {
 public:
-    NodeQueryResultGetNextQueryResultAsyncWorker(Napi::Function& callback,
-        NodeQueryResult* currentQueryResult, NodeQueryResult* nextQueryResult)
-        : AsyncWorker(callback), currQueryResult(currentQueryResult),
-          nextQueryResult(nextQueryResult) {}
+    NodeQueryResultGetNextQueryResultAsyncWorker(
+        Napi::Function& callback, NodeQueryResult* currentQueryResult)
+        : AsyncWorker(callback), currQueryResult(currentQueryResult) {
+        currQueryResult->AcquireAsyncUse();
+        currQueryResult->Ref();
+    }
 
     ~NodeQueryResultGetNextQueryResultAsyncWorker() override = default;
 
     void Execute() override {
         try {
             nextOwnedResult = currQueryResult->DetachNextQueryResult();
-            auto nextResult =
-                nextOwnedResult ? nextOwnedResult.get() : currQueryResult->queryResult->getNextQueryResult();
-            if (nextResult == nullptr) {
+            if (nextOwnedResult == nullptr) {
                 return;
             }
-            if (!nextResult->isSuccess()) {
-                SetError(nextResult->getErrorMessage());
-                return;
-            }
-            if (nextOwnedResult) {
-                nextQueryResult->SetOwnedQueryResult(std::move(nextOwnedResult));
-            } else {
-                nextQueryResult->SetQueryResult(nextResult, false);
+            if (!nextOwnedResult->isSuccess()) {
+                SetError(nextOwnedResult->getErrorMessage());
             }
         } catch (const std::exception& exc) {
             SetError(std::string(exc.what()));
         }
     }
 
-    void OnOK() override { Callback().Call({Env().Null()}); }
+    void OnOK() override {
+        auto env = Env();
+        currQueryResult->ReleaseAsyncUse();
+        currQueryResult->Unref();
+        if (nextOwnedResult == nullptr) {
+            Callback().Call({env.Null(), env.Undefined()});
+            return;
+        }
+        Callback().Call({env.Null(), NodeQueryResult::NewInstance(env, std::move(nextOwnedResult))});
+    }
 
-    void OnError(Napi::Error const& error) override { Callback().Call({error.Value()}); }
+    void OnError(Napi::Error const& error) override {
+        currQueryResult->ReleaseAsyncUse();
+        currQueryResult->Unref();
+        Callback().Call({error.Value()});
+    }
 
 private:
     NodeQueryResult* currQueryResult;
-    NodeQueryResult* nextQueryResult;
     std::unique_ptr<QueryResult> nextOwnedResult;
 };
 
@@ -183,13 +220,16 @@ class NodeQueryResultGetQuerySummaryAsyncWorker : public Napi::AsyncWorker {
 public:
     NodeQueryResultGetQuerySummaryAsyncWorker(Napi::Function& callback,
         NodeQueryResult* nodeQueryResult)
-        : AsyncWorker(callback), nodeQueryResult(nodeQueryResult) {}
+        : AsyncWorker(callback), nodeQueryResult(nodeQueryResult) {
+        nodeQueryResult->AcquireAsyncUse();
+        nodeQueryResult->Ref();
+    }
 
     ~NodeQueryResultGetQuerySummaryAsyncWorker() override = default;
 
     inline void Execute() override {
         try {
-            auto querySummary = nodeQueryResult->queryResult->getQuerySummary();
+            auto querySummary = nodeQueryResult->GetQueryResult().getQuerySummary();
             result["compilingTime"] = querySummary->getCompilingTime();
             result["executionTime"] = querySummary->getExecutionTime();
         } catch (const std::exception& exc) {
@@ -203,10 +243,16 @@ public:
         for (const auto& [key, value] : result) {
             nodeResult.Set(key, Napi::Number::New(env, value));
         }
+        nodeQueryResult->ReleaseAsyncUse();
+        nodeQueryResult->Unref();
         Callback().Call({env.Null(), nodeResult});
     }
 
-    inline void OnError(Napi::Error const& error) override { Callback().Call({error.Value()}); }
+    inline void OnError(Napi::Error const& error) override {
+        nodeQueryResult->ReleaseAsyncUse();
+        nodeQueryResult->Unref();
+        Callback().Call({error.Value()});
+    }
 
 private:
     NodeQueryResult* nodeQueryResult;

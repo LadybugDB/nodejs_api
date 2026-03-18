@@ -2,51 +2,57 @@ const os = require("os");
 const childProcess = require("child_process");
 const path = require("path");
 const fs = require("fs");
-const fsCallback = require("fs");
 const process = require("process");
 
 const isNpmBuildFromSourceSet = process.env.npm_config_build_from_source;
 const platform = process.platform;
 const arch = process.arch;
-const prebuiltPath = path.join(
+
+// When the package was published with prebuilt binaries, each platform's
+// binary lives in a dedicated optional sub-package.  npm may hoist it to the
+// project root's node_modules or keep it nested; resolve() handles both.
+const MAIN_PKG_NAME = require(path.join(__dirname, "package.json")).name;
+const subPkgName = `${MAIN_PKG_NAME}-${platform}-${arch}`;
+
+let subPkgBinaryPath = null;
+try {
+  // require.resolve finds the sub-package regardless of hoisting depth.
+  const subPkgMain = require.resolve(`${subPkgName}/package.json`, { paths: [__dirname] });
+  subPkgBinaryPath = path.join(path.dirname(subPkgMain), "lbugjs.node");
+  if (!fs.existsSync(subPkgBinaryPath)) subPkgBinaryPath = null;
+} catch (e) {
+  // Sub-package not installed (unsupported platform or missing optionalDep).
+}
+
+// Fall back to the legacy prebuilt/ directory layout for compatibility with
+// tarballs built before the per-platform sub-package migration.
+const legacyPrebuiltPath = path.join(
   __dirname,
   "prebuilt",
   `lbugjs-${platform}-${arch}.node`
 );
+
+const prebuiltPath = subPkgBinaryPath
+  ? subPkgBinaryPath
+  : fs.existsSync(legacyPrebuiltPath)
+  ? legacyPrebuiltPath
+  : null;
 
 // Check if building from source is forced
 if (isNpmBuildFromSourceSet) {
   console.log(
     "The NPM_CONFIG_BUILD_FROM_SOURCE environment variable is set. Building from source."
   );
-}
-// Check if prebuilt binaries are available
-else if (fsCallback.existsSync(prebuiltPath)) {
-  console.log("Prebuilt binary is available.");
+} else if (prebuiltPath) {
+  console.log(`Prebuilt binary found at ${prebuiltPath}.`);
   console.log("Copying prebuilt binary to package directory...");
   fs.copyFileSync(prebuiltPath, path.join(__dirname, "lbugjs.node"));
   console.log(
     `Copied ${prebuiltPath} -> ${path.join(__dirname, "lbugjs.node")}.`
   );
-  console.log("Copying JS files to package directory...");
-  const jsSourceDir = path.join(
-    __dirname,
-    "lbug-source",
-    "tools",
-    "nodejs_api",
-    "src_js"
-  );
-  const jsFiles = fs.readdirSync(jsSourceDir).filter((file) => {
-    return file.endsWith(".js") || file.endsWith(".mjs") || file.endsWith(".d.ts");
-  });
-  console.log("Files to copy: ");
-  for (const file of jsFiles) {
-    console.log("  " + file);
-  }
-  for (const file of jsFiles) {
-    fs.copyFileSync(path.join(jsSourceDir, file), path.join(__dirname, file));
-  }
-  console.log("Copied JS files to package directory.");
+  // When the package was built with prebuilt binaries, the JS files are
+  // already present in the package root (copied by package.js at publish
+  // time).  No further copying is needed.
   console.log("Done!");
   process.exit(0);
 } else {

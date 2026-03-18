@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            mac_env: false
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+            mac_env: false
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+            mac_env: true
+          - os: windows-latest
+            platform: win32
+            arch: x64
+            mac_env: false
+    steps:
+      - name: Checkout nodejs_api
+        uses: actions/checkout@v4
+        with:
+          path: tools/nodejs_api
+
+      - name: Fetch ladybug source archive
+        shell: bash
+        run: |
+          curl -fsSL https://github.com/LadybugDB/ladybug/archive/refs/heads/main.tar.gz \
+            | tar -xz --strip-components=1 --exclude='*/tools/nodejs_api'
+        # Downloads the ladybug source tree (without a full clone) and extracts
+        # it into the working directory, excluding tools/nodejs_api since we
+        # already have it checked out there.
+
+      - name: Fetch dataset archive
+        shell: bash
+        run: |
+          mkdir -p dataset
+          curl -fsSL https://github.com/ladybugdb/dataset/archive/refs/heads/main.tar.gz \
+            | tar -xz --strip-components=1 -C dataset
+        # Tests reference ../../dataset/ relative to tools/nodejs_api.
+
+      - name: Install Node.js dependencies (non-Windows)
+        if: ${{ matrix.platform != 'win32' }}
+        working-directory: tools/nodejs_api
+        run: npm i
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.mac_env && '13.3' || '' }}
+          ARCHFLAGS: ${{ matrix.mac_env && format('-arch {0}', matrix.arch) || '' }}
+
+      - name: Install Node.js dependencies (Windows)
+        if: ${{ matrix.platform == 'win32' }}
+        working-directory: tools/nodejs_api
+        run: npm i
+
+      - name: Enable long paths (Windows)
+        if: ${{ matrix.platform == 'win32' }}
+        run: |
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+          git config --system core.longpaths true
+        shell: pwsh
+
+      - name: Set up ccache (Windows)
+        if: ${{ matrix.platform == 'win32' }}
+        shell: cmd
+        run: |
+          choco install ccache -y
+          echo CMAKE_C_COMPILER_LAUNCHER=ccache>> %GITHUB_ENV%
+          echo CMAKE_CXX_COMPILER_LAUNCHER=ccache>> %GITHUB_ENV%
+          echo CCACHE_DIR=D:\c>> %GITHUB_ENV%
+          echo CCACHE_TEMPDIR=D:\t>> %GITHUB_ENV%
+          if not exist D:\c mkdir D:\c
+          if not exist D:\t mkdir D:\t
+          ccache --set-config=max_size=2G
+          ccache --set-config=compression=true
+          ccache --set-config=cache_dir=D:\c
+          ccache --set-config=temporary_dir=D:\t
+        env:
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+
+      - name: Cache ccache directory (Windows)
+        if: ${{ matrix.platform == 'win32' }}
+        uses: actions/cache@v4
+        with:
+          path: D:\c
+          key: ${{ runner.os }}-ccache-node-${{ hashFiles('**/CMakeLists.txt', '**/*.cpp', '**/*.h', 'tools/nodejs_api/**') }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-node-
+
+      - name: Build Node.js native module (Windows)
+        if: ${{ matrix.platform == 'win32' }}
+        shell: cmd
+        run: |
+          powershell.exe -Command "Add-MpPreference -ExclusionPath '${{ github.workspace }}'"
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          ccache -s
+          make GEN=Ninja nodejs
+          ccache -s
+
+      - name: Build Node.js native module (non-Windows)
+        if: ${{ matrix.platform != 'win32' }}
+        run: make GEN=Ninja nodejs
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.mac_env && '13.3' || '' }}
+          CMAKE_OSX_ARCHITECTURES: ${{ matrix.mac_env && matrix.arch || '' }}
+
+      - name: Run Node.js tests
+        working-directory: tools/nodejs_api
+        run: npm test

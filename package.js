@@ -14,6 +14,7 @@ const PLATFORM_MAP = {
   "lbugjs-linux-x64.node":    { os: "linux",  cpu: "x64"   },
   "lbugjs-linux-arm64.node":  { os: "linux",  cpu: "arm64" },
   "lbugjs-darwin-arm64.node": { os: "darwin", cpu: "arm64" },
+  "lbugjs-darwin-x64.node":   { os: "darwin", cpu: "x64"   },
   "lbugjs-win32-x64.node":    { os: "win32",  cpu: "x64"   },
 };
 

@@ -115,8 +115,10 @@ if (process.platform === "win32") {
   );
 
   for (let key in env) {
+    const lowerKey = key.toLowerCase();
     if (
-      key.toLowerCase().includes("node" || key.toLowerCase().includes("npm"))
+      (lowerKey.includes("node") || lowerKey.includes("npm")) &&
+      lowerKey !== "lbug_nodejs_precompiled_lib_path"
     ) {
       delete env[key];
     }

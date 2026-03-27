@@ -79,6 +79,7 @@ file(GLOB JS_SOURCE_FILES
 # Copy all JS/TS files to build directory
 file(COPY ${JS_SOURCE_FILES} DESTINATION  "${CMAKE_CURRENT_SOURCE_DIR}/build")
 
+set(NODEJS_LBUG_LINK_DEPS "")
 if(NOT TARGET lbug)
   if(NOT LBUG_NODEJS_USE_PRECOMPILED_LIB)
     message(FATAL_ERROR "The Node.js addon requires the lbug target or LBUG_NODEJS_USE_PRECOMPILED_LIB=TRUE.")
@@ -94,10 +95,10 @@ if(NOT TARGET lbug)
   target_include_directories(lbug INTERFACE
     "${PROJECT_SOURCE_DIR}/src/include"
     "${PROJECT_BINARY_DIR}/src/include")
-  target_link_libraries(lbug INTERFACE lbug_link_deps)
   if(WIN32)
     target_compile_definitions(lbug INTERFACE LBUG_STATIC_DEFINE)
   endif()
+  set(NODEJS_LBUG_LINK_DEPS "$<LINK_ONLY:lbug_link_deps>")
 endif()
 
 add_library(lbugjs SHARED ${CPP_SOURCE_FILES})
@@ -115,4 +116,4 @@ if(APPLE)
 else()
   target_link_options(lbugjs PRIVATE -Wl,--export-dynamic)
 endif()
-target_link_libraries(lbugjs PRIVATE lbug ${CMAKE_JS_LIB})
+target_link_libraries(lbugjs PRIVATE lbug ${NODEJS_LBUG_LINK_DEPS} ${CMAKE_JS_LIB})

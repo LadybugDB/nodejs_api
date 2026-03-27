@@ -126,6 +126,19 @@ if (process.platform === "win32") {
   );
 }
 
+if (env.LBUG_NODEJS_PRECOMPILED_LIB_PATH) {
+  env.EXTRA_CMAKE_FLAGS = [
+    env.EXTRA_CMAKE_FLAGS,
+    "-DBUILD_LBUG=FALSE",
+    "-DBUILD_SHELL=FALSE",
+    "-DLBUG_NODEJS_USE_PRECOMPILED_LIB=TRUE",
+    `-DLBUG_NODEJS_PRECOMPILED_LIB_PATH=${env.LBUG_NODEJS_PRECOMPILED_LIB_PATH}`,
+  ].filter(Boolean).join(" ");
+  console.log(
+    `Using precompiled liblbug from '${env.LBUG_NODEJS_PRECOMPILED_LIB_PATH}'.`
+  );
+}
+
 childProcess.execSync("make nodejs NUM_THREADS=" + THREADS, {
   env,
   cwd: path.join(__dirname, "lbug-source"),

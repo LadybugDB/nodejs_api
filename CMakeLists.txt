@@ -79,6 +79,27 @@ file(GLOB JS_SOURCE_FILES
 # Copy all JS/TS files to build directory
 file(COPY ${JS_SOURCE_FILES} DESTINATION  "${CMAKE_CURRENT_SOURCE_DIR}/build")
 
+if(NOT TARGET lbug)
+  if(NOT LBUG_NODEJS_USE_PRECOMPILED_LIB)
+    message(FATAL_ERROR "The Node.js addon requires the lbug target or LBUG_NODEJS_USE_PRECOMPILED_LIB=TRUE.")
+  endif()
+  if(NOT LBUG_NODEJS_PRECOMPILED_LIB_PATH)
+    message(FATAL_ERROR "LBUG_NODEJS_PRECOMPILED_LIB_PATH must point to a precompiled static liblbug archive.")
+  endif()
+  if(NOT EXISTS "${LBUG_NODEJS_PRECOMPILED_LIB_PATH}")
+    message(FATAL_ERROR "Precompiled liblbug archive not found: ${LBUG_NODEJS_PRECOMPILED_LIB_PATH}")
+  endif()
+  add_library(lbug STATIC IMPORTED GLOBAL)
+  set_target_properties(lbug PROPERTIES IMPORTED_LOCATION "${LBUG_NODEJS_PRECOMPILED_LIB_PATH}")
+  target_include_directories(lbug INTERFACE
+    "${PROJECT_SOURCE_DIR}/src/include"
+    "${PROJECT_BINARY_DIR}/src/include")
+  target_link_libraries(lbug INTERFACE lbug_link_deps)
+  if(WIN32)
+    target_compile_definitions(lbug INTERFACE LBUG_STATIC_DEFINE)
+  endif()
+endif()
+
 add_library(lbugjs SHARED ${CPP_SOURCE_FILES})
 if(CMAKE_JS_SRC)
   target_sources(lbugjs PRIVATE "${CMAKE_JS_SRC}")

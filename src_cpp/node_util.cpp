@@ -198,6 +198,15 @@ Napi::Value Util::ConvertToNapiObject(const Value& value, Napi::Env env) {
         auto valString = value.toString();
         return Napi::String::New(env, valString).ToNumber();
     }
+    case LogicalTypeID::JSON: {
+        auto valString = value.getValue<std::string>();
+        auto global = env.Global();
+        auto jsonObj = global.Get("JSON").As<Napi::Object>();
+        auto parseFunc = jsonObj.Get("parse").As<Napi::Function>();
+        auto jsonString = Napi::String::New(env, valString);
+        auto result = parseFunc.Call(global, {jsonString});
+        return result;
+    }
     default:
         throw Exception("Unsupported type: " + dataType.toString());
     }

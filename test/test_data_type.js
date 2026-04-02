@@ -544,3 +544,20 @@ describe("DECIMAL", function () {
     );
   });
 });
+
+describe("JSON", function () {
+  it("should convert JSON type", async function () {
+    await conn.query("INSTALL JSON");
+    await conn.query("LOAD EXTENSION JSON");
+    const queryResult = await conn.query("RETURN json_object('level', 1, 'ms', 32, 'flags', json_array(0, 1, 3)) AS data;");
+    const result = await queryResult.getAll();
+    assert.equal(result.length, 1);
+    assert.equal(Object.keys(result[0]).length, 1);
+    assert.isTrue("data" in result[0]);
+    assert.equal(typeof result[0]["data"], "object");
+    assert.equal(result[0]["data"]["level"], 1);
+    assert.equal(result[0]["data"]["ms"], 32);
+    assert.isTrue(Array.isArray(result[0]["data"]["flags"]));
+    assert.deepEqual(result[0]["data"]["flags"], [0, 1, 3]);
+  });
+});

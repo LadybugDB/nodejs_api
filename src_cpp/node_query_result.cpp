@@ -37,10 +37,10 @@ Napi::Object NodeQueryResult::Init(Napi::Env env, Napi::Object exports) {
 }
 
 Napi::Object NodeQueryResult::NewInstance(
-    Napi::Env /*env*/, std::unique_ptr<QueryResult> queryResult) {
+    Napi::Env /*env*/, std::unique_ptr<QueryResult> queryResult, std::shared_ptr<Database> db) {
     auto obj = constructor.New({});
     auto* nodeQueryResult = Napi::ObjectWrap<NodeQueryResult>::Unwrap(obj);
-    nodeQueryResult->AdoptQueryResult(std::move(queryResult));
+    nodeQueryResult->AdoptQueryResult(std::move(queryResult), std::move(db));
     return obj;
 }
 
@@ -51,10 +51,12 @@ NodeQueryResult::~NodeQueryResult() {
     this->Close();
 }
 
-void NodeQueryResult::AdoptQueryResult(std::unique_ptr<QueryResult> queryResult) {
+void NodeQueryResult::AdoptQueryResult(
+        std::unique_ptr<QueryResult> queryResult, std::shared_ptr<Database> db) {
     ThrowIfAsyncOperationInFlight("replace");
     columnNames.reset();
     ownedQueryResult = std::move(queryResult);
+    database = std::move(db);
 }
 
 std::unique_ptr<QueryResult> NodeQueryResult::DetachNextQueryResult() {
@@ -140,7 +142,7 @@ Napi::Value NodeQueryResult::GetNextQueryResultSync(const Napi::CallbackInfo& in
                 .ThrowAsJavaScriptException();
             return env.Undefined();
         }
-        return NewInstance(env, std::move(nextOwnedResult));
+        return NewInstance(env, std::move(nextOwnedResult), database);
     } catch (const std::exception& exc) {
         Napi::Error::New(env, std::string(exc.what())).ThrowAsJavaScriptException();
     }
@@ -286,4 +288,5 @@ void NodeQueryResult::Close(const Napi::CallbackInfo& info) {
 void NodeQueryResult::Close() {
     columnNames.reset();
     ownedQueryResult.reset();
+    database.reset();
 }

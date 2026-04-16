@@ -70,10 +70,11 @@ namespace main {
 class ConnectionExecuteAsyncWorker : public Napi::AsyncWorker {
 public:
     ConnectionExecuteAsyncWorker(Napi::Function& callback, std::shared_ptr<Connection>& connection,
+        std::shared_ptr<Database>& database,
         std::shared_ptr<PreparedStatement> preparedStatement, NodeQueryResult* nodeQueryResult,
         std::unordered_map<std::string, std::unique_ptr<Value>> params,
         Napi::Value progressCallback)
-        : Napi::AsyncWorker(callback), connection(connection),
+        : Napi::AsyncWorker(callback), connection(connection), database(database),
           preparedStatement(std::move(preparedStatement)), nodeQueryResult(nodeQueryResult),
           params(std::move(params)) {
         if (progressCallback.IsFunction()) {
@@ -100,12 +101,11 @@ public:
             auto result =
                 connection
                     ->executeWithParamsWithID(preparedStatement.get(), std::move(params), queryID);
-            auto* resultRaw = result.get();
-            nodeQueryResult->AdoptQueryResult(std::move(result));
-            if (!resultRaw->isSuccess()) {
-                SetError(resultRaw->getErrorMessage());
+            if (!result->isSuccess()) {
+                SetError(result->getErrorMessage());
                 return;
             }
+            nodeQueryResult->AdoptQueryResult(std::move(result), database);
         } catch (const std::exception& exc) {
             SetError(std::string(exc.what()));
         }
@@ -122,6 +122,7 @@ public:
 
 private:
     std::shared_ptr<Connection> connection;
+    std::shared_ptr<Database> database;
     std::shared_ptr<PreparedStatement> preparedStatement;
     NodeQueryResult* nodeQueryResult;
     std::unordered_map<std::string, std::unique_ptr<Value>> params;
@@ -131,9 +132,10 @@ private:
 class ConnectionQueryAsyncWorker : public Napi::AsyncWorker {
 public:
     ConnectionQueryAsyncWorker(Napi::Function& callback, std::shared_ptr<Connection>& connection,
+        std::shared_ptr<Database>& database,
         std::string statement, NodeQueryResult* nodeQueryResult, Napi::Value progressCallback)
-        : Napi::AsyncWorker(callback), connection(connection), statement(std::move(statement)),
-          nodeQueryResult(nodeQueryResult) {
+        : Napi::AsyncWorker(callback), connection(connection), database(database),
+          statement(std::move(statement)), nodeQueryResult(nodeQueryResult) {
         if (progressCallback.IsFunction()) {
             this->progressCallback = Napi::ThreadSafeFunction::New(Env(),
                 progressCallback.As<Napi::Function>(), "ProgressCallback", 0, 1);
@@ -156,11 +158,11 @@ public:
         }
         try {
             auto result = connection->queryWithID(statement, queryID);
-            auto* resultRaw = result.get();
-            nodeQueryResult->AdoptQueryResult(std::move(result));
-            if (!resultRaw->isSuccess()) {
-                SetError(resultRaw->getErrorMessage());
+            if (!result->isSuccess()) {
+                SetError(result->getErrorMessage());
+                return;
             }
+            nodeQueryResult->AdoptQueryResult(std::move(result), database);
         } catch (const std::exception& exc) {
             SetError(std::string(exc.what()));
         }
@@ -177,6 +179,7 @@ public:
 
 private:
     std::shared_ptr<Connection> connection;
+    std::shared_ptr<Database> database;
     std::string statement;
     NodeQueryResult* nodeQueryResult;
     std::optional<Napi::ThreadSafeFunction> progressCallback;

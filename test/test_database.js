@@ -512,4 +512,28 @@ describe("Database close", function () {
     assert.isTrue(conn._isClosed);
     assert.throws(() => res.resetIterator(), Error, "Runtime exception: The current operation is not allowed because the parent database is closed.");
   });
+
+  it("should not crash when discarded query results are GC'd after database is closed", async function () {
+    // Regression test for a double-free bug: NodeQueryResult holds a
+    // MaterializedQueryResult whose FactorizedTable destructor accesses
+    // database-owned memory. If the Database is destroyed before the GC
+    // finalizer for NodeQueryResult runs, that destructor crashes. The fix
+    // is for NodeQueryResult to hold a shared_ptr<Database> so the Database
+    // cannot be freed until every result that references it is gone.
+    //
+    // The key pattern being tested is: query results are *not stored*, making
+    // them immediately eligible for GC. conn.closeSync() and db.closeSync()
+    // are then called before GC has had a chance to collect them. When the GC
+    // finalizer eventually runs (possibly later in this mocha process), it must
+    // not crash.
+    const testDb = new lbug.Database();
+    const conn = new lbug.Connection(testDb);
+    await conn.query("CREATE NODE TABLE T(id STRING PRIMARY KEY)");
+    await conn.query(`CREATE (:T {id: 'test-${Date.now()}'})`);
+    await conn.query("MATCH (t:T) RETURN t.id");
+    conn.closeSync();
+    testDb.closeSync();
+    assert.isTrue(conn._isClosed);
+    assert.isTrue(testDb._isClosed);
+  });
 });

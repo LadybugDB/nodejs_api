@@ -9,11 +9,12 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.target.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
+        node-version: [18, 20, 22]
+        target:
           - os: ubuntu-latest
             platform: linux
             arch: x64
@@ -26,6 +27,10 @@ jobs:
             platform: darwin
             arch: arm64
             mac_env: true
+          - os: macos-13
+            platform: darwin
+            arch: x64
+            mac_env: true
           - os: windows-latest
             platform: win32
             arch: x64
@@ -35,6 +40,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: tools/nodejs_api
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: tools/nodejs_api/package-lock.json
 
       - name: Fetch ladybug source archive
         shell: bash
@@ -54,27 +66,27 @@ jobs:
         # Tests reference ../../dataset/ relative to tools/nodejs_api.
 
       - name: Install Node.js dependencies (non-Windows)
-        if: ${{ matrix.platform != 'win32' }}
+        if: ${{ matrix.target.platform != 'win32' }}
         working-directory: tools/nodejs_api
         run: npm i
         env:
-          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.mac_env && '13.3' || '' }}
-          ARCHFLAGS: ${{ matrix.mac_env && format('-arch {0}', matrix.arch) || '' }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target.mac_env && '13.3' || '' }}
+          ARCHFLAGS: ${{ matrix.target.mac_env && format('-arch {0}', matrix.target.arch) || '' }}
 
       - name: Install Node.js dependencies (Windows)
-        if: ${{ matrix.platform == 'win32' }}
+        if: ${{ matrix.target.platform == 'win32' }}
         working-directory: tools/nodejs_api
         run: npm i
 
       - name: Enable long paths (Windows)
-        if: ${{ matrix.platform == 'win32' }}
+        if: ${{ matrix.target.platform == 'win32' }}
         run: |
           New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
           git config --system core.longpaths true
         shell: pwsh
 
       - name: Set up ccache (Windows)
-        if: ${{ matrix.platform == 'win32' }}
+        if: ${{ matrix.target.platform == 'win32' }}
         shell: cmd
         run: |
           choco install ccache -y
@@ -93,16 +105,17 @@ jobs:
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
 
       - name: Cache ccache directory (Windows)
-        if: ${{ matrix.platform == 'win32' }}
+        if: ${{ matrix.target.platform == 'win32' }}
         uses: actions/cache@v4
         with:
           path: D:\c
-          key: ${{ runner.os }}-ccache-node-${{ hashFiles('**/CMakeLists.txt', '**/*.cpp', '**/*.h', 'tools/nodejs_api/**') }}
+          key: ${{ runner.os }}-ccache-node-${{ matrix.node-version }}-${{ hashFiles('**/CMakeLists.txt', '**/*.cpp', '**/*.h', 'tools/nodejs_api/**') }}
           restore-keys: |
+            ${{ runner.os }}-ccache-node-${{ matrix.node-version }}-
             ${{ runner.os }}-ccache-node-
 
       - name: Build Node.js native module (Windows)
-        if: ${{ matrix.platform == 'win32' }}
+        if: ${{ matrix.target.platform == 'win32' }}
         shell: cmd
         run: |
           powershell.exe -Command "Add-MpPreference -ExclusionPath '${{ github.workspace }}'"
@@ -112,11 +125,51 @@ jobs:
           ccache -s
 
       - name: Build Node.js native module (non-Windows)
-        if: ${{ matrix.platform != 'win32' }}
+        if: ${{ matrix.target.platform != 'win32' }}
         run: make GEN=Ninja nodejs
         env:
-          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.mac_env && '13.3' || '' }}
-          CMAKE_OSX_ARCHITECTURES: ${{ matrix.mac_env && matrix.arch || '' }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target.mac_env && '13.3' || '' }}
+          CMAKE_OSX_ARCHITECTURES: ${{ matrix.target.mac_env && matrix.target.arch || '' }}
+
+      - name: Run Node.js tests
+        working-directory: tools/nodejs_api
+        run: npm test
+
+  node-canary:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout nodejs_api
+        uses: actions/checkout@v4
+        with:
+          path: tools/nodejs_api
+
+      - name: Set up Node.js canary (24)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tools/nodejs_api/package-lock.json
+
+      - name: Fetch ladybug source archive
+        shell: bash
+        run: |
+          curl -fsSL https://github.com/LadybugDB/ladybug/archive/refs/heads/main.tar.gz \
+            | tar -xz --strip-components=1 --exclude='*/tools/nodejs_api'
+
+      - name: Fetch dataset archive
+        shell: bash
+        run: |
+          mkdir -p dataset
+          curl -fsSL https://github.com/ladybugdb/dataset/archive/refs/heads/main.tar.gz \
+            | tar -xz --strip-components=1 -C dataset
+
+      - name: Install Node.js dependencies
+        working-directory: tools/nodejs_api
+        run: npm i
+
+      - name: Build Node.js native module
+        run: make GEN=Ninja nodejs
 
       - name: Run Node.js tests
         working-directory: tools/nodejs_api

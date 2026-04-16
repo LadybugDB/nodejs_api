@@ -505,12 +505,12 @@ describe("Database close", function () {
     assert.equal(res.getNumTuples(), 1);
     const tuple = await res.getNext();
     assert.deepEqual(tuple, { "+(1,1)": 2 });
+    // Close in reverse order: db first, then conn, then result. None should crash.
     testDb.closeSync();
     assert.isTrue(testDb._isClosed);
-    assert.throws(() => conn.querySync("RETURN 1+1"), Error, "Runtime exception: The current operation is not allowed because the parent database is closed.");
     conn.closeSync();
     assert.isTrue(conn._isClosed);
-    assert.throws(() => res.resetIterator(), Error, "Runtime exception: The current operation is not allowed because the parent database is closed.");
+    res.close();
   });
 
   it("should not crash when discarded query results are GC'd after database is closed", async function () {

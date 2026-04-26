@@ -116,4 +116,15 @@ if(APPLE)
 else()
   target_link_options(lbugjs PRIVATE -Wl,--export-dynamic)
 endif()
+
+# Statically link libstdc++ and libgcc on Linux so the published .node
+# does not impose a GLIBCXX version requirement on end users. Without this,
+# the prebuilt addon fails to load on stable distros (e.g. Debian 12,
+# Ubuntu 22.04, RHEL 8/9) whose system libstdc++ is older than the build
+# host's. Default ON; can be disabled for users who deliberately want a
+# shared-libstdc++ addon.
+option(LBUG_NODEJS_STATIC_LIBSTDCXX "Statically link libstdc++ and libgcc into the Node addon (Linux only)" ON)
+if(UNIX AND NOT APPLE AND LBUG_NODEJS_STATIC_LIBSTDCXX)
+  target_link_options(lbugjs PRIVATE -static-libstdc++ -static-libgcc)
+endif()
 target_link_libraries(lbugjs PRIVATE lbug ${NODEJS_LBUG_LINK_DEPS} ${CMAKE_JS_LIB})

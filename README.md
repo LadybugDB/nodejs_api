@@ -81,6 +81,7 @@ Both CommonJS (`require`) and ES Modules (`import`) are fully supported.
 ### Install Dev Dependencies
 
 ```bash
+git submodule update --init --recursive
 npm install --include=dev
 ```
 

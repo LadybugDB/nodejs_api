@@ -90,6 +90,14 @@ npm install --include=dev
 npm run build
 ```
 
+By default, the standalone build looks for a sibling Ladybug checkout at
+`../ladybug` via `LBUG_SOURCE_DIR`, and reuses the prebuilt static library from
+`../ladybug/build/release`. Override that location like this:
+
+```bash
+LBUG_SOURCE_DIR=/path/to/ladybug npm run build
+```
+
 ### Run Tests
 
 ```bash

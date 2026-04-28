@@ -1,6 +1,17 @@
+cmake_minimum_required(VERSION 3.15)
+project(lbugjs LANGUAGES CXX C)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 add_definitions(-DNAPI_VERSION=6)
 add_definitions(-DNODE_RUNTIME=node)
 add_definitions(-DBUILDING_NODE_EXTENSION)
+
+set(LBUG_SOURCE_DIR "" CACHE PATH "Path to the Ladybug source tree used for standalone Node.js builds")
+set(LBUG_BUILD_DIR "" CACHE PATH "Path to the Ladybug build tree used for standalone Node.js builds")
+set(LBUG_NODEJS_EXTRA_LINK_LIBS "" CACHE STRING "Additional link libraries for standalone Node.js builds against a precompiled liblbug")
 
 # If on Windows use npx.cmd instead of npx
 if(WIN32)
@@ -27,6 +38,12 @@ execute_process(
   OUTPUT_VARIABLE CMAKE_JS_SRC
   ERROR_QUIET
 )
+execute_process(
+  COMMAND node -p "process.config.variables.node_prefix || ''"
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  OUTPUT_VARIABLE NODE_PREFIX
+  ERROR_QUIET
+)
 
 # Without this windows breaks with:  Invalid character escape '\P'.
 string(REPLACE "\\" "/" CMAKE_JS_INC "${CMAKE_JS_INC}")
@@ -46,6 +63,7 @@ string(REPLACE "\\" "/" CMAKE_JS_SRC "${CMAKE_JS_SRC}")
 string(STRIP "${CMAKE_JS_INC}" CMAKE_JS_INC)
 string(STRIP "${CMAKE_JS_LIB}" CMAKE_JS_LIB)
 string(STRIP "${CMAKE_JS_SRC}" CMAKE_JS_SRC)
+string(STRIP "${NODE_PREFIX}" NODE_PREFIX)
 # Extract last line: remove everything up to and including the last newline.
 string(REGEX REPLACE ".*\n" "" CMAKE_JS_INC "${CMAKE_JS_INC}")
 string(REGEX REPLACE ".*\n" "" CMAKE_JS_LIB "${CMAKE_JS_LIB}")
@@ -60,6 +78,12 @@ if(NOT CMAKE_JS_LIB MATCHES "^(/|[A-Za-z]:)")
 endif()
 if(NOT CMAKE_JS_SRC MATCHES "^(/|[A-Za-z]:)")
   set(CMAKE_JS_SRC "")
+endif()
+if(NOT CMAKE_JS_INC AND NODE_PREFIX MATCHES "^(/|[A-Za-z]:)")
+  set(CMAKE_JS_INC "${NODE_PREFIX}/include/node")
+endif()
+if(WIN32 AND NOT CMAKE_JS_LIB AND NODE_PREFIX MATCHES "^(/|[A-Za-z]:)")
+  set(CMAKE_JS_LIB "${NODE_PREFIX}/lib/node.lib")
 endif()
 
 # Print CMAKE_JS variables
@@ -90,15 +114,29 @@ if(NOT TARGET lbug)
   if(NOT EXISTS "${LBUG_NODEJS_PRECOMPILED_LIB_PATH}")
     message(FATAL_ERROR "Precompiled liblbug archive not found: ${LBUG_NODEJS_PRECOMPILED_LIB_PATH}")
   endif()
+
+  set(LBUG_NODEJS_SOURCE_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/src/include")
+  set(LBUG_NODEJS_BUILD_INCLUDE_DIR "${PROJECT_BINARY_DIR}/src/include")
+  if(LBUG_SOURCE_DIR)
+    set(LBUG_NODEJS_SOURCE_INCLUDE_DIR "${LBUG_SOURCE_DIR}/src/include")
+  endif()
+  if(LBUG_BUILD_DIR)
+    set(LBUG_NODEJS_BUILD_INCLUDE_DIR "${LBUG_BUILD_DIR}/src/include")
+  elseif(LBUG_SOURCE_DIR)
+    set(LBUG_NODEJS_BUILD_INCLUDE_DIR "${LBUG_SOURCE_DIR}/build/release/src/include")
+  endif()
+
   add_library(lbug STATIC IMPORTED GLOBAL)
   set_target_properties(lbug PROPERTIES IMPORTED_LOCATION "${LBUG_NODEJS_PRECOMPILED_LIB_PATH}")
   target_include_directories(lbug INTERFACE
-    "${PROJECT_SOURCE_DIR}/src/include"
-    "${PROJECT_BINARY_DIR}/src/include")
+    "${LBUG_NODEJS_SOURCE_INCLUDE_DIR}"
+    "${LBUG_NODEJS_BUILD_INCLUDE_DIR}")
   if(WIN32)
     target_compile_definitions(lbug INTERFACE LBUG_STATIC_DEFINE)
   endif()
-  set(NODEJS_LBUG_LINK_DEPS "$<LINK_ONLY:lbug_link_deps>")
+  if(TARGET lbug_link_deps)
+    set(NODEJS_LBUG_LINK_DEPS "$<LINK_ONLY:lbug_link_deps>")
+  endif()
 endif()
 
 add_library(lbugjs SHARED ${CPP_SOURCE_FILES})
@@ -117,3 +155,6 @@ else()
   target_link_options(lbugjs PRIVATE -Wl,--export-dynamic)
 endif()
 target_link_libraries(lbugjs PRIVATE lbug ${NODEJS_LBUG_LINK_DEPS} ${CMAKE_JS_LIB})
+if(LBUG_NODEJS_EXTRA_LINK_LIBS)
+  target_link_libraries(lbugjs PRIVATE ${LBUG_NODEJS_EXTRA_LINK_LIBS})
+endif()

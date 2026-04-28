@@ -34,7 +34,9 @@ jobs:
       - name: Checkout nodejs_api
         uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           path: tools/nodejs_api
+          submodules: recursive
 
       - name: Fetch ladybug source archive
         shell: bash
@@ -45,13 +47,16 @@ jobs:
         # it into the working directory, excluding tools/nodejs_api since we
         # already have it checked out there.
 
-      - name: Fetch dataset archive
-        shell: bash
-        run: |
-          mkdir -p dataset
-          curl -fsSL https://github.com/ladybugdb/dataset/archive/refs/heads/main.tar.gz \
-            | tar -xz --strip-components=1 -C dataset
-        # Tests reference ../../dataset/ relative to tools/nodejs_api.
+      - name: Setup ccache (non-Windows)
+        if: ${{ matrix.platform != 'win32' }}
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: nodejs-${{ runner.os }}-${{ runner.arch }}-${{ github.ref }}
+          max-size: 2G
+          create-symlink: true
+          restore-keys: |
+            nodejs-${{ runner.os }}-${{ runner.arch }}-refs/heads/main
+            nodejs-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install Node.js dependencies (non-Windows)
         if: ${{ matrix.platform != 'win32' }}
@@ -117,6 +122,8 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.mac_env && '13.3' || '' }}
           CMAKE_OSX_ARCHITECTURES: ${{ matrix.mac_env && matrix.arch || '' }}
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
 
       - name: Run Node.js tests
         working-directory: tools/nodejs_api

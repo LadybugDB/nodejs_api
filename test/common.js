@@ -18,6 +18,9 @@ if (TEST_INSTALLED) {
 const tmp = require("tmp");
 const fs = require("fs/promises");
 const path = require("path");
+
+const toCypherPath = (filePath) => filePath.replace(/\\/g, "/");
+
 const initTests = async () => {
   const tmpPath = await new Promise((resolve, reject) => {
     tmp.dir({ unsafeCleanup: true }, (err, path, _) => {
@@ -31,7 +34,11 @@ const initTests = async () => {
   const dbPath = path.join(tmpPath, "db.lbdb");
   const db = new lbug.Database(dbPath, 1 << 28 /* 256MB */);
   const conn = new lbug.Connection(db, 4);
-  const tinysnbDir = "../../dataset/tinysnb/";
+  const datasetDir = path.resolve(__dirname, "..", "dataset");
+  const tinysnbDir = path.join(datasetDir, "tinysnb") + path.sep;
+  const tinysnbSerialDir = path.join(datasetDir, "tinysnb-serial") + path.sep;
+  const cypherTinysnbDir = toCypherPath(tinysnbDir);
+  const cypherTinysnbSerialDir = toCypherPath(tinysnbSerialDir);
 
   const schema = (await fs.readFile(tinysnbDir + "schema.cypher"))
     .toString()
@@ -56,7 +63,7 @@ const initTests = async () => {
     }
 
     // handle multiple data files in one line
-    const statement = line.replace(dataFileRegex, `"${tinysnbDir}$1"`);
+    const statement = line.replace(dataFileRegex, `"${cypherTinysnbDir}$1"`);
 
     await conn.query(statement);
   }
@@ -65,7 +72,7 @@ const initTests = async () => {
     "create node table moviesSerial (ID SERIAL, name STRING, length INT32, note STRING, PRIMARY KEY (ID))"
   );
   await conn.query(
-    'copy moviesSerial from "../../dataset/tinysnb-serial/vMovies.csv"'
+    `copy moviesSerial from "${cypherTinysnbSerialDir}vMovies.csv"`
   );
 
   global.dbPath = dbPath;

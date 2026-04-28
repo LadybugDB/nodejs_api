@@ -7,6 +7,34 @@ const process = require("process");
 const isNpmBuildFromSourceSet = process.env.npm_config_build_from_source;
 const platform = process.platform;
 const arch = process.arch;
+const DEFAULT_LBUG_SOURCE_DIR = path.resolve(__dirname, "../ladybug");
+
+function resolveExistingPath(candidate) {
+  if (!candidate) {
+    return null;
+  }
+  const resolved = path.resolve(candidate);
+  return fs.existsSync(resolved) ? resolved : null;
+}
+
+function getDefaultBuildDir(lbugSourceDir) {
+  return lbugSourceDir ? path.join(lbugSourceDir, "build", "release") : null;
+}
+
+function getDefaultPrecompiledLibPath(lbugBuildDir) {
+  if (!lbugBuildDir) {
+    return null;
+  }
+  const candidates = platform === "win32"
+    ? [
+        path.join(lbugBuildDir, "src", "Release", "lbug.lib"),
+        path.join(lbugBuildDir, "src", "lbug.lib"),
+        path.join(lbugBuildDir, "src", "Release", "liblbug.lib"),
+        path.join(lbugBuildDir, "src", "liblbug.lib"),
+      ]
+    : [path.join(lbugBuildDir, "src", "liblbug.a")];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
 
 // When the package was published with prebuilt binaries, each platform's
 // binary lives in a dedicated optional sub-package.  npm may hoist it to the
@@ -59,6 +87,17 @@ if (isNpmBuildFromSourceSet) {
   console.log("Prebuilt binary is not available, building from source...");
 }
 
+const externalLbugSourceDir = resolveExistingPath(
+  process.env.LBUG_SOURCE_DIR || DEFAULT_LBUG_SOURCE_DIR
+);
+const externalLbugBuildDir = resolveExistingPath(
+  process.env.LBUG_BUILD_DIR || getDefaultBuildDir(externalLbugSourceDir)
+);
+const externalPrecompiledLibPath = resolveExistingPath(
+  process.env.LBUG_NODEJS_PRECOMPILED_LIB_PATH ||
+    getDefaultPrecompiledLibPath(externalLbugBuildDir)
+);
+
 // Get number of threads
 const THREADS = os.cpus().length;
 console.log(`Using ${THREADS} threads to build Lbug.`);
@@ -73,6 +112,12 @@ childProcess.execSync("npm install", {
 // Build the Lbug source code
 console.log("Building Lbug source code...");
 const env = { ...process.env };
+if (externalLbugSourceDir) {
+  env.LBUG_SOURCE_DIR = externalLbugSourceDir;
+}
+if (externalLbugBuildDir) {
+  env.LBUG_BUILD_DIR = externalLbugBuildDir;
+}
 
 if (process.platform === "darwin") {
   const archflags = process.env["ARCHFLAGS"]
@@ -128,16 +173,19 @@ if (process.platform === "win32") {
   );
 }
 
-if (env.LBUG_NODEJS_PRECOMPILED_LIB_PATH) {
+if (externalPrecompiledLibPath) {
+  env.LBUG_NODEJS_PRECOMPILED_LIB_PATH = externalPrecompiledLibPath;
   env.EXTRA_CMAKE_FLAGS = [
     env.EXTRA_CMAKE_FLAGS,
+    env.LBUG_SOURCE_DIR ? `-DLBUG_SOURCE_DIR=${env.LBUG_SOURCE_DIR}` : null,
+    env.LBUG_BUILD_DIR ? `-DLBUG_BUILD_DIR=${env.LBUG_BUILD_DIR}` : null,
     "-DBUILD_LBUG=FALSE",
     "-DBUILD_SHELL=FALSE",
     "-DLBUG_NODEJS_USE_PRECOMPILED_LIB=TRUE",
-    `-DLBUG_NODEJS_PRECOMPILED_LIB_PATH=${env.LBUG_NODEJS_PRECOMPILED_LIB_PATH}`,
+    `-DLBUG_NODEJS_PRECOMPILED_LIB_PATH=${externalPrecompiledLibPath}`,
   ].filter(Boolean).join(" ");
   console.log(
-    `Using precompiled liblbug from '${env.LBUG_NODEJS_PRECOMPILED_LIB_PATH}'.`
+    `Using precompiled liblbug from '${externalPrecompiledLibPath}'.`
   );
 }
 

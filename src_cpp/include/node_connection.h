@@ -105,7 +105,7 @@ public:
                 SetError(result->getErrorMessage());
                 return;
             }
-            nodeQueryResult->AdoptQueryResult(std::move(result), database);
+            nodeQueryResult->AdoptQueryResult(std::move(result), connection, database);
         } catch (const std::exception& exc) {
             SetError(std::string(exc.what()));
         }
@@ -132,8 +132,8 @@ private:
 class ConnectionQueryAsyncWorker : public Napi::AsyncWorker {
 public:
     ConnectionQueryAsyncWorker(Napi::Function& callback, std::shared_ptr<Connection>& connection,
-        std::shared_ptr<Database>& database,
-        std::string statement, NodeQueryResult* nodeQueryResult, Napi::Value progressCallback)
+        std::shared_ptr<Database>& database, std::string statement,
+        NodeQueryResult* nodeQueryResult, Napi::Value progressCallback)
         : Napi::AsyncWorker(callback), connection(connection), database(database),
           statement(std::move(statement)), nodeQueryResult(nodeQueryResult) {
         if (progressCallback.IsFunction()) {
@@ -162,7 +162,7 @@ public:
                 SetError(result->getErrorMessage());
                 return;
             }
-            nodeQueryResult->AdoptQueryResult(std::move(result), database);
+            nodeQueryResult->AdoptQueryResult(std::move(result), connection, database);
         } catch (const std::exception& exc) {
             SetError(std::string(exc.what()));
         }

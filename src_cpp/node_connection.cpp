@@ -116,7 +116,7 @@ Napi::Value NodeConnection::QuerySync(const Napi::CallbackInfo& info) {
         if (!result->isSuccess()) {
             Napi::Error::New(env, result->getErrorMessage()).ThrowAsJavaScriptException();
         }
-        nodeQueryResult->AdoptQueryResult(std::move(result), database);
+        nodeQueryResult->AdoptQueryResult(std::move(result), connection, database);
     } catch (const std::exception& exc) {
         Napi::Error::New(env, std::string(exc.what())).ThrowAsJavaScriptException();
     }
@@ -136,7 +136,7 @@ Napi::Value NodeConnection::ExecuteSync(const Napi::CallbackInfo& info) {
         if (!result->isSuccess()) {
             Napi::Error::New(env, result->getErrorMessage()).ThrowAsJavaScriptException();
         }
-        nodeQueryResult->AdoptQueryResult(std::move(result), database);
+        nodeQueryResult->AdoptQueryResult(std::move(result), connection, database);
     } catch (const std::exception& exc) {
         Napi::Error::New(env, std::string(exc.what())).ThrowAsJavaScriptException();
     }
@@ -150,7 +150,8 @@ Napi::Value NodeConnection::QueryAsync(const Napi::CallbackInfo& info) {
     auto nodeQueryResult = Napi::ObjectWrap<NodeQueryResult>::Unwrap(info[1].As<Napi::Object>());
     auto callback = info[2].As<Napi::Function>();
     auto asyncWorker =
-        new ConnectionQueryAsyncWorker(callback, connection, database, statement, nodeQueryResult, info[3]);
+        new ConnectionQueryAsyncWorker(
+            callback, connection, database, statement, nodeQueryResult, info[3]);
     asyncWorker->Queue();
     return info.Env().Undefined();
 }

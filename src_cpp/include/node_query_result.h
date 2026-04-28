@@ -21,9 +21,10 @@ class NodeQueryResult : public Napi::ObjectWrap<NodeQueryResult> {
 public:
     static Napi::Object Init(Napi::Env env, Napi::Object exports);
     static Napi::Object NewInstance(Napi::Env env, std::unique_ptr<QueryResult> queryResult,
-        std::shared_ptr<Database> db);
+        std::shared_ptr<Connection> connection, std::shared_ptr<Database> database);
     explicit NodeQueryResult(const Napi::CallbackInfo& info);
-    void AdoptQueryResult(std::unique_ptr<QueryResult> queryResult, std::shared_ptr<Database> db);
+    void AdoptQueryResult(std::unique_ptr<QueryResult> queryResult,
+        std::shared_ptr<Connection> connection, std::shared_ptr<Database> database);
     std::unique_ptr<QueryResult> DetachNextQueryResult();
     ~NodeQueryResult() override;
 
@@ -53,6 +54,7 @@ private:
 private:
     static Napi::FunctionReference constructor;
     std::unique_ptr<QueryResult> ownedQueryResult = nullptr;
+    std::shared_ptr<Connection> connection = nullptr;
     std::shared_ptr<Database> database = nullptr;
     std::unique_ptr<std::vector<std::string>> columnNames = nullptr;
     std::atomic<uint32_t> activeAsyncUses = 0;
@@ -205,7 +207,7 @@ public:
             return;
         }
         Callback().Call({env.Null(), NodeQueryResult::NewInstance(env, std::move(nextOwnedResult),
-            currQueryResult->database)});
+            currQueryResult->connection, currQueryResult->database)});
     }
 
     void OnError(Napi::Error const& error) override {

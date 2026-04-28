@@ -518,8 +518,9 @@ describe("Database close", function () {
     // MaterializedQueryResult whose FactorizedTable destructor accesses
     // database-owned memory. If the Database is destroyed before the GC
     // finalizer for NodeQueryResult runs, that destructor crashes. The fix
-    // is for NodeQueryResult to hold a shared_ptr<Database> so the Database
-    // cannot be freed until every result that references it is gone.
+    // is for NodeQueryResult to hold a shared_ptr<Connection> so the native
+    // connection keeps the database-backed state alive until every result
+    // that references it is gone.
     //
     // The key pattern being tested is: query results are *not stored*, making
     // them immediately eligible for GC. conn.closeSync() and db.closeSync()
@@ -530,6 +531,28 @@ describe("Database close", function () {
     const conn = new lbug.Connection(testDb);
     await conn.query("CREATE NODE TABLE T(id STRING PRIMARY KEY)");
     await conn.query(`CREATE (:T {id: 'test-${Date.now()}'})`);
+    await conn.query("MATCH (t:T) RETURN t.id");
+    conn.closeSync();
+    testDb.closeSync();
+    assert.isTrue(conn._isClosed);
+    assert.isTrue(testDb._isClosed);
+  });
+
+  it("should not crash when file-backed async query results are discarded before close", async function () {
+    const tmpDbPath = await new Promise((resolve, reject) => {
+      tmp.dir({ unsafeCleanup: true }, (err, path, _) => {
+        if (err) {
+          return reject(err);
+        }
+        return resolve(path);
+      });
+    });
+    const dbPath = path.join(tmpDbPath, "test.lbdb");
+    const testDb = new lbug.Database(dbPath);
+    const conn = new lbug.Connection(testDb);
+    await conn.query("CREATE NODE TABLE IF NOT EXISTS T(id STRING PRIMARY KEY)");
+    const id = `test-${Date.now()}`;
+    await conn.query(`CREATE (:T {id: '${id}'})`);
     await conn.query("MATCH (t:T) RETURN t.id");
     conn.closeSync();
     testDb.closeSync();

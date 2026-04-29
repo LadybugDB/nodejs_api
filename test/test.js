@@ -16,6 +16,7 @@ describe("lbug", () => {
   importTest("Data types", "./test_data_type.js");
   importTest("Query parameters", "./test_parameter.js");
   importTest("Concurrent query execution", "./test_concurrency.js");
+  importTest("Windows database paths", "./test_windows_path.js");
   importTest("Version", "./test_version.js");
   importTest("Synchronous API", "./test_sync_api.js");
 });

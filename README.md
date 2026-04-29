@@ -153,6 +153,6 @@ Refer to the [npm documentation](https://docs.npmjs.com/cli/v9/commands/npm-publ
 
 ## 🔗 Resources
 
-* [Ladybug GitHub](https://github.com/lbugdb/lbug)
+* [Ladybug GitHub](https://github.com/ladybugdb/ladybug)
 * [Ladybug Documentation](https://docs.ladybugdb.com)
 * [Issue Tracker](https://github.com/LadybugDB/ladybug/issues)

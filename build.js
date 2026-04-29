@@ -57,16 +57,41 @@ function getDefaultExtraLinkLibs(lbugBuildDir, precompiledLibPath) {
     const tokens = fs.readFileSync(linkTxtPath, "utf8").match(tokenPattern) || [];
     const libs = [];
     let sawPrecompiledLib = false;
-
-    for (const rawToken of tokens) {
+    const linkLineHasPrecompiledLib = tokens.some((rawToken) => {
       const token = rawToken.replace(/^"(.*)"$/, "$1");
+      if (token.startsWith("-")) {
+        return false;
+      }
+      const resolvedToken = fs.existsSync(path.resolve(linkBaseDir, token))
+        ? path.resolve(linkBaseDir, token)
+        : path.resolve(linkTxtDir, token);
+      return resolvedToken === precompiledLibPath;
+    });
+    let outputPath = null;
+
+    for (let i = 0; i < tokens.length; i++) {
+      const rawToken = tokens[i];
+      const token = rawToken.replace(/^"(.*)"$/, "$1");
+      if (token === "-o") {
+        const outputToken = tokens[++i]?.replace(/^"(.*)"$/, "$1");
+        outputPath = outputToken ? path.resolve(linkBaseDir, outputToken) : null;
+        continue;
+      }
+      if (token === "-install_name" || token === "-current_version" || token === "-compatibility_version") {
+        i++;
+        continue;
+      }
+      if (token.startsWith("@")) {
+        continue;
+      }
+
       const resolvedToken = token.startsWith("-")
         ? token
         : fs.existsSync(path.resolve(linkBaseDir, token))
           ? path.resolve(linkBaseDir, token)
           : path.resolve(linkTxtDir, token);
 
-      if (!sawPrecompiledLib) {
+      if (!sawPrecompiledLib && linkLineHasPrecompiledLib) {
         if (resolvedToken === precompiledLibPath) {
           sawPrecompiledLib = true;
         }
@@ -80,7 +105,7 @@ function getDefaultExtraLinkLibs(lbugBuildDir, precompiledLibPath) {
       if (!/\.(a|lib|dylib|so|tbd)$/.test(token)) {
         continue;
       }
-      if (resolvedToken === precompiledLibPath) {
+      if (resolvedToken === precompiledLibPath || resolvedToken === outputPath) {
         continue;
       }
       libs.push(resolvedToken);

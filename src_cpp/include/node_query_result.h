@@ -200,14 +200,19 @@ public:
 
     void OnOK() override {
         auto env = Env();
-        currQueryResult->ReleaseAsyncUse();
-        currQueryResult->Unref();
         if (nextOwnedResult == nullptr) {
+            currQueryResult->ReleaseAsyncUse();
+            currQueryResult->Unref();
             Callback().Call({env.Null(), env.Undefined()});
             return;
         }
-        Callback().Call({env.Null(), NodeQueryResult::NewInstance(env, std::move(nextOwnedResult),
-            currQueryResult->connection, currQueryResult->database)});
+        auto connection = currQueryResult->connection;
+        auto database = currQueryResult->database;
+        auto nextQueryResult = NodeQueryResult::NewInstance(
+            env, std::move(nextOwnedResult), std::move(connection), std::move(database));
+        currQueryResult->ReleaseAsyncUse();
+        currQueryResult->Unref();
+        Callback().Call({env.Null(), nextQueryResult});
     }
 
     void OnError(Napi::Error const& error) override {

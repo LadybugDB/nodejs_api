@@ -199,7 +199,7 @@ Napi::Value Util::ConvertToNapiObject(const Value& value, Napi::Env env) {
         return Napi::String::New(env, valString).ToNumber();
     }
     case LogicalTypeID::JSON: {
-        auto valString = value.getValue<std::string>();
+        auto valString = value.toString();
         auto global = env.Global();
         auto jsonObj = global.Get("JSON").As<Napi::Object>();
         auto parseFunc = jsonObj.Get("parse").As<Napi::Function>();
